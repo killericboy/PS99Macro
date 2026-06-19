@@ -1,7 +1,7 @@
-# ⚡ RankBlitz
+# ⚡ RankBlitz by Killericboy 
 
 **Pet Simulator 99 · Rank Quest Automation**  
-by Killericboy · Built with WebView2 HTML/CSS/JS UI + AutoHotkey v2 logic.
+
 
 ---
 
