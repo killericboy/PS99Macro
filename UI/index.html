@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RankBlitz Macro v1.0.0</title>
+<link rel="shortcut icon" href="../assets/logo.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+  <div class="title-bar">
+    <div class="title-left">
+      <span class="logo">
+        <img src="../assets/logo.png" alt="Logo">
+      </span>
+      <div>
+        <h1>RankBlitz Macro</h1>
+        <div class="sub">PS99 Rank Quest Macro &nbsp;·&nbsp; by Killericboy &nbsp;·&nbsp; V1.0.0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active"    onclick="showTab('main',this)">Main</div>
+    <div class="tab"           onclick="showTab('keybinds',this)">Keybinds</div>
+    <div class="tab"           onclick="showTab('settings',this)">Settings</div>
+    <div class="tab"           onclick="showTab('logs',this)">Logs</div>
+    <div class="tab"           onclick="showTab('profiles',this)">Profiles</div>
+  </div>
+
+  <div class="panels-wrap">
+
+    <!-- ══ MAIN ══ -->
+    <div class="panel active" id="tab-main">
+
+      <div class="status-row">
+        <div class="sr-cell">
+          <div class="sr-label">LOOP</div>
+          <div class="sr-value" id="act-loop">-/-</div>
+        </div>
+        <div class="sr-sep"></div>
+        <div class="sr-cell">
+          <div class="sr-label">ZONE</div>
+          <div class="sr-value" id="act-zone">-</div>
+        </div>
+        <div class="sr-sep"></div>
+        <div class="sr-cell">
+          <div class="sr-label">AREA</div>
+          <div class="sr-value" id="act-area">-</div>
+        </div>
+        <div class="sr-sep"></div>
+        <div class="sr-cell sr-grow">
+          <div class="sr-label">QUEST</div>
+          <div class="sr-value accent" id="act-quest">-</div>
+        </div>
+        <div class="sr-sep"></div>
+        <div class="sr-cell sr-grow">
+          <div class="sr-label">ACTION</div>
+          <div class="sr-value" id="act-action">-</div>
+        </div>
+        <div class="sr-sep"></div>
+        <div class="sr-cell">
+          <div class="sr-label">TIME</div>
+          <div class="sr-value" id="act-time">-</div>
+        </div>
+      </div>
+
+      <div class="quest-header">
+        <div class="section-label" style="margin:0">QUEST SLOTS</div>
+        <button class="btn-sm" onclick="ahk('RefreshQuests')">🔄 Refresh</button>
+      </div>
+
+      <div class="quest-table-wrap">
+        <table class="quest-table">
+          <thead>
+            <tr>
+              <th>★</th>
+              <th>Quest</th>
+              <th>Amount</th>
+              <th>Priority</th>
+              <th>Status</th>
+              <th>Zone</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="quest-slots"></tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- ══ KEYBINDS ══ -->
+    <div class="panel" id="tab-keybinds">
+      <div class="section-label">ITEM KEYBINDS</div>
+      <div class="info-chip">Set these to match your in-game Equipment bar keybinds.</div>
+      <div class="keybind-grid" id="keybind-grid"></div>
+    </div>
+
+    <!-- ══ SETTINGS ══ -->
+    <div class="panel" id="tab-settings">
+
+      <div class="section-label">GENERAL</div>
+      <div class="card">
+        <div class="row" style="flex-wrap:nowrap">
+          <span class="label">Loops</span>
+          <div class="stepper">
+            <button onclick="stepInt('numberOfLoops',-1)">−</button>
+            <input type="number" id="numberOfLoops" value="20" min="1" max="9999" oninput="save()">
+            <button onclick="stepInt('numberOfLoops',1)">+</button>
+          </div>
+          <span class="label">Eggs</span>
+          <div class="stepper">
+            <button onclick="stepInt('eggsAtOnce',-1)">−</button>
+            <input type="number" id="eggsAtOnce" value="73" min="1" max="999" oninput="save()">
+            <button onclick="stepInt('eggsAtOnce',1)">+</button>
+          </div>
+          <span class="label">Delay</span>
+          <div class="stepper">
+            <button onclick="stepFlt('delayModifier',-0.1)">−</button>
+            <input type="number" id="delayModifier" value="1.2" min="0.5" max="5" step="0.1" oninput="save()">
+            <button onclick="stepFlt('delayModifier',0.1)">+</button>
+          </div>
+          <label class="check-row" onclick="toggleCheck('eatFruit')">
+            <input type="checkbox" id="eatFruit" checked onchange="save()">
+            <div class="check-box"></div>
+            <span class="check-label">Eat Fruit</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section-label">GAMEPASSES</div>
+      <div class="card">
+        <div class="row" style="flex-wrap:nowrap;gap:12px">
+          <label class="check-row" onclick="toggleCheck('hasVip')">
+            <input type="checkbox" id="hasVip" onchange="save()">
+            <div class="check-box"></div><span class="check-label">VIP</span>
+          </label>
+          <label class="check-row" onclick="toggleCheck('hasAutoFarm')">
+            <input type="checkbox" id="hasAutoFarm" onchange="save()">
+            <div class="check-box"></div><span class="check-label">Auto Farm</span>
+          </label>
+          <label class="check-row" onclick="toggleCheck('hasDoubleStars')">
+            <input type="checkbox" id="hasDoubleStars" onchange="save()">
+            <div class="check-box"></div><span class="check-label">Double Stars</span>
+          </label>
+          <label class="check-row" onclick="toggleCheck('hasShinyHoverboard')">
+            <input type="checkbox" id="hasShinyHoverboard" onchange="save()">
+            <div class="check-box"></div><span class="check-label">Shiny Hoverboard</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section-label">ZONE BOOSTS</div>
+      <div class="card">
+        <div class="row" style="gap:16px">
+          <label class="check-row" onclick="toggleCheck('useFlagBestZone')">
+            <input type="checkbox" id="useFlagBestZone" onchange="save()">
+            <div class="check-box"></div>
+            <span class="check-label">Drop Flag in Best Zone</span>
+          </label>
+          <label class="check-row" onclick="toggleCheck('useSprinklerBestZone')">
+            <input type="checkbox" id="useSprinklerBestZone" onchange="save()">
+            <div class="check-box"></div>
+            <span class="check-label">Drop Sprinkler in Best Zone</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section-label">TIMING (seconds)</div>
+      <div class="card">
+        <div class="timing-grid" id="timing-grid"></div>
+      </div>
+
+      <div class="section-label">RECONNECT</div>
+      <div class="card">
+        <label class="check-row" onclick="toggleCheck('reconnectAfterLoops')" style="margin-bottom:6px">
+          <input type="checkbox" id="reconnectAfterLoops" onchange="save()">
+          <div class="check-box"></div>
+          <span class="check-label">Reconnect after all loops complete</span>
+        </label>
+        <div class="row" style="margin-bottom:5px">
+          <span class="label">Wait (s)</span>
+          <div class="stepper">
+            <button onclick="stepInt('reconnectSeconds',-5)">−</button>
+            <input type="number" id="reconnectSeconds" value="45" min="10" max="300" oninput="save()">
+            <button onclick="stepInt('reconnectSeconds',5)">+</button>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:5px">
+          <span class="label">Private server code</span>
+        </div>
+        <div class="row">
+          <input type="text" id="privateServerCode" class="input-full" placeholder="Leave blank for public server" oninput="save()">
+          <button class="btn-sm" onclick="ahk('JoinServer')">▶ Join</button>
+          <button class="btn-sm" onclick="ahk('TestReconnect')">↺ Test</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ══ LOGS ══ -->
+    <div class="panel" id="tab-logs">
+      <div class="log-header">
+        <div class="section-label" style="margin:0">ACTIVITY LOG</div>
+        <button class="btn-sm" onclick="clearLog()">🗑 Clear</button>
+      </div>
+      <div class="log-box log-box-full" id="log-box"></div>
+    </div>
+
+    <!-- ══ PROFILES ══ -->
+    <div class="panel" id="tab-profiles">
+      <div class="section-label">Profiles</div>
+      <div class="profiles-layout">
+        <div class="profile-list-wrap">
+          <div class="profile-list" id="profile-list"></div>
+        </div>
+        <div class="profile-actions">
+          <span class="label">Profile name</span>
+          <input type="text" id="profileName" class="input-full" placeholder="Enter name...">
+          <button class="btn-primary" id="addSaveBtn" onclick="doAddProfile()">➕ Add</button>
+          <button class="btn-primary" onclick="doLoadProfile()">📂 Load</button>
+          <button class="btn-sm" onclick="doDeleteProfile()" style="color:var(--red)">🗑 Delete</button>
+          <div class="feedback" id="profile-feedback"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /panels-wrap -->
+
+  <div class="stats-bar">
+    <div class="roblox-indicator">
+      <span id="det-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#e8232a;border-radius:3px;font-size:10px;font-weight:900;color:#fff;flex-shrink:0">R</span>
+      <div class="det-dot" id="det-dot"></div>
+      <span id="det-name">Not detected</span>
+      <button class="btn-icon" onclick="ahk('RefreshDetected')" title="Refresh">⟳</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="label">STATUS</span>
+      <span class="badge badge-stopped" id="status-badge">STOPPED</span>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="btn-start" onclick="ahk('StartMacro')">▶ Start (F9)</button>
+    <button class="btn-pause" id="pauseBtn" onclick="ahk('PauseMacro')">⏸ Pause (F8)</button>
+    <button class="btn-stop"  onclick="ahk('StopMacro')">■ Stop (F10)</button>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
