@@ -14,38 +14,6 @@
 
 ---
 
-## 📁 Folder Structure
-
-```
-RankBlitz\
-├── RankBlitz.bat          ← Run this to launch
-├── README.md
-├── lib\
-│   ├── RankBlitz.ahk      ← Main macro logic (NEW)
-│   ├── Roblox.ahk         ← Window helpers (NEW)
-│   ├── WebView2.ahk
-│   ├── JSON.ahk
-│   ├── HyperSleep.ahk
-│   ├── Gdip_All.ahk
-│   ├── Gdip_ImageSearch.ahk
-│   ├── ComVar.ahk
-│   ├── Promise.ahk
-│   ├── 32bit\
-│   │   └── WebView2Loader.dll
-│   └── 64bit\
-│       └── WebView2Loader.dll
-├── ui\
-│   ├── index.html         ← RankBlitz UI (NEW)
-│   ├── style.css          ← RankBlitz styling (NEW)
-│   └── app.js             ← JS bridge (NEW)
-├── settings\
-│   └── profiles.json      ← Saved profiles (auto-created)
-└── assets\
-    └── ps99.ico           ← Optional tray icon
-```
-
----
-
 ## 🚀 Quick Start
 
 1. Double-click `RankBlitz.bat`
