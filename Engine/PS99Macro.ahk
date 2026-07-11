@@ -12,16 +12,18 @@
 #Include ..\lib\Roblox.ahk
 #Include ..\lib\WebView2.ahk
 #Include ..\lib\JSON.ahk
-#Include ..\lib\OCR.ahk
 #Include ..\lib\RapidOCR.ahk
 #Include support\QuestReader.ahk
-#Include support\Quests.ahk   ; provides QUEST_DATA, QUEST_PRIORITY
-#Include support\Ranks.ahk    ; provides RANK_DATA, getRankDetails
-#Include support\Zones.ahk    ; provides ZONE map
+#Include support\Quests.ahk
+#Include support\Ranks.ahk
+#Include support\Zones.ahk
 
 SendMode "Event"
 CoordMode "Mouse", "Client"
 CoordMode "Pixel", "Client"
+
+; ── Developer mode — set true here to force-enable the Dev tab ──
+global DEV_MODE_FORCE := false
 
 ; ── Runtime state ─────────────────────────────────────────────
 global running      := false
@@ -61,7 +63,7 @@ global cfg := Map(
     "reconnectSeconds",     45,
     "privateServerCode",    "",
 
-    ; Timing (seconds — multiplied by delayModifier at runtime)
+    ; Timing (seconds)
     "timePinata",           10,
     "timeLuckyBlock",       10,
     "timeCoinJar",          10,
@@ -103,20 +105,25 @@ global cfg := Map(
     ; Profile helpers
     "profileName",          "",
     "selectedProfile",      "",
-)
 
+    ; ── Developer settings ─────────────────────────────────────
+    "debugMode",            false,   ; OCR overlay + Pin highlights
+    "ocrLogEnabled",        true,    ; Write OCR text to ocr.log
+    "debugLogEnabled",      true,    ; Write activity to debug.log
+)
 
 ; ── Constants ─────────────────────────────────────────────────
 MACRO_VERSION := "1.0.0"
 JSON_PATH     := A_ScriptDir "\..\settings\profiles.json"
+DEBUG_LOG_PATH := A_ScriptDir "\..\settings\debug.log"
+OCR_LOG_PATH   := A_ScriptDir "\..\settings\ocr.log"
 PS99_PLACE_ID := "8737899170"
 BEST_ZONE     := 219
 RARE_EGG_ZONE := 209
 FLAG_ZONES    := [200, 201, 202, 203, 204]
 UI_PATH       := SubStr(A_ScriptDir, 1, InStr(A_ScriptDir, "\",, -1) - 1) "\ui\index.html"
 
-; ── Quest icons (QUEST_DATA/QUEST_PRIORITY come from support\Quests.ahk) ──
-; Quests.ahk uses getSetting() — shim it to read from cfg
+; ── Quest icons ───────────────────────────────────────────────
 getSetting(key) {
     global cfg
     keyMap := Map(
@@ -137,7 +144,6 @@ global QUEST_ICONS := Map(
     "66",   "📦",  "?",    "❓",  "wait", "⏳"
 )
 
-; Active quest slots (populated by RefreshQuests)
 global questSlots := [
     Map("stars",1,"enabled",true,"questId","?","questName","Unknown","status","?","amount",1,"priority",0,"zone","-"),
     Map("stars",2,"enabled",true,"questId","?","questName","Unknown","status","?","amount",1,"priority",0,"zone","-"),
@@ -145,16 +151,34 @@ global questSlots := [
     Map("stars",4,"enabled",true,"questId","?","questName","Unknown","status","?","amount",1,"priority",0,"zone","-"),
 ]
 
-; ── Log buffer ────────────────────────────────────────────────
+; ── Log buffer + file writing ──────────────────────────────────
 global logLines := []
+
+WriteDebugLog(msg) {
+    global cfg, DEBUG_LOG_PATH
+    if !cfg.Has("debugLogEnabled") || !cfg["debugLogEnabled"]
+        return
+    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    try FileAppend "[" ts "] " msg "`n", DEBUG_LOG_PATH, "UTF-8"
+}
+
+WriteOcrLog(msg) {
+    global cfg, OCR_LOG_PATH
+    if !cfg.Has("ocrLogEnabled") || !cfg["ocrLogEnabled"]
+        return
+    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    try FileAppend "[" ts "] " msg "`n", OCR_LOG_PATH, "UTF-8"
+}
 
 AddLog(msg) {
     global logLines
     ts := FormatTime(A_Now, "HH:mm:ss")
-    logLines.Push("[" ts "] " msg)
+    line := "[" ts "] " msg
+    logLines.Push(line)
     if logLines.Length > 50
         logLines.RemoveAt(1)
     JS('window.PS99.addLog("[' ts '] ' EscJ(msg) '")')
+    WriteDebugLog(msg)
 }
 
 ; ── WebView2 globals ──────────────────────────────────────────
@@ -210,13 +234,14 @@ OnGuiSize(GuiObj, MinMax, Width, Height) {
 }
 
 OnNavCompleted(sender, args) {
-    global wv2ready
+    global wv2ready, DEV_MODE_FORCE
     wv2ready := true
     PushStateToJS()
     JS_RefreshDetected()
-    ; Auto-read quests on load if Roblox is already running
-    if GetRobloxHWND() != 0
-        SetTimer(RefreshQuests, -1500)   ; slight delay so UI fully settles first
+    ; If DEV_MODE_FORCE is set in code, auto-unlock dev tab
+    if DEV_MODE_FORCE
+        JS("window.PS99.unlockDevTab()")
+    ; Quest load is NOT triggered here — only on Start and Refresh buttons
 }
 
 OnWebMessage(sender, args) {
@@ -250,6 +275,11 @@ OnWebMessage(sender, args) {
         case "LoadSelectedProfile":  LoadSelectedProfile(data)
         case "DeleteProfile":        DeleteProfile(data)
         case "SetQuestEnabled":      SetQuestEnabled(data)
+        case "SaveDevSettings":      SaveDevSettings(data)
+        case "ClearDebugLog":        ClearDebugLog()
+        case "ClearOcrLog":          ClearOcrLog()
+        case "CaptureRewardsButton": CaptureRewardsButton()
+        case "UnlockDevTab":         ; JS-side only, no AHK action needed
     }
 }
 
@@ -261,9 +291,33 @@ JS(script) {
 
 EscJ(s) => StrReplace(StrReplace(StrReplace(s, "\", "\\"), '"', '\"'), "`n", "\n")
 
+; ── Developer settings handler ────────────────────────────────
+SaveDevSettings(data) {
+    global cfg
+    try cfg["debugMode"]       := data["debugMode"] ? 1 : 0
+    try cfg["ocrLogEnabled"]   := data["ocrLogEnabled"] ? 1 : 0
+    try cfg["debugLogEnabled"] := data["debugLogEnabled"] ? 1 : 0
+    SaveProfile()
+    AddLog("Dev settings saved — debugMode=" (cfg["debugMode"] ? "ON" : "OFF")
+        . " ocrLog=" (cfg["ocrLogEnabled"] ? "ON" : "OFF")
+        . " debugLog=" (cfg["debugLogEnabled"] ? "ON" : "OFF"))
+}
+
+ClearDebugLog() {
+    global DEBUG_LOG_PATH
+    try FileDelete DEBUG_LOG_PATH
+    AddLog("debug.log cleared")
+}
+
+ClearOcrLog() {
+    global OCR_LOG_PATH
+    try FileDelete OCR_LOG_PATH
+    AddLog("ocr.log cleared")
+}
+
 ; ── Push all config state to JS ───────────────────────────────
 PushStateToJS(*) {
-    global cfg, currentProfile, wv2ready
+    global cfg, currentProfile, wv2ready, DEV_MODE_FORCE
     if !wv2ready
         return
 
@@ -273,7 +327,6 @@ PushStateToJS(*) {
         profileJSON .= (i > 1 ? "," : "") '"' EscJ(n) '"'
     profileJSON .= "]"
 
-    ; Helper booleans as JS strings
     b(k) => cfg[k] ? "true" : "false"
 
     json := "{"
@@ -294,7 +347,6 @@ PushStateToJS(*) {
     json .= '"privateServerCode":"'   EscJ(cfg["privateServerCode"]) '",'
     json .= '"useFlagBestZone":'      b("useFlagBestZone")        ","
     json .= '"useSprinklerBestZone":' b("useSprinklerBestZone")   ","
-    ; Timing
     json .= '"timePinata":'           cfg["timePinata"]           ","
     json .= '"timeLuckyBlock":'       cfg["timeLuckyBlock"]       ","
     json .= '"timeCoinJar":'          cfg["timeCoinJar"]          ","
@@ -304,7 +356,6 @@ PushStateToJS(*) {
     json .= '"timeDiamonds":'         cfg["timeDiamonds"]         ","
     json .= '"timeSuperiorChests":'   cfg["timeSuperiorChests"]   ","
     json .= '"timeDiamondBreak":'     cfg["timeDiamondBreak"]     ","
-    ; Keybinds
     json .= '"keyLuckyBlock":"'       EscJ(cfg["keyLuckyBlock"])   '",'
     json .= '"keyCoinJar":"'          EscJ(cfg["keyCoinJar"])      '",'
     json .= '"keyComet":"'            EscJ(cfg["keyComet"])        '",'
@@ -316,7 +367,6 @@ PushStateToJS(*) {
     json .= '"keyPotion3":"'          EscJ(cfg["keyPotion3"])      '",'
     json .= '"keyPotion4":"'          EscJ(cfg["keyPotion4"])      '",'
     json .= '"keyPotion5":"'          EscJ(cfg["keyPotion5"])      '",'
-    ; Upgrade targets
     json .= '"petToGolden":"'         EscJ(cfg["petToGolden"])     '",'
     json .= '"petToRainbow":"'        EscJ(cfg["petToRainbow"])    '",'
     json .= '"potionToUpgrade":"'     EscJ(cfg["potionToUpgrade"]) '",'
@@ -326,9 +376,13 @@ PushStateToJS(*) {
     json .= '"stdPetsForGolden":'     cfg["stdPetsForGolden"]      ","
     json .= '"goldenPetsForRainbow":' cfg["goldenPetsForRainbow"]  ","
     json .= '"rareEggHatches":'       cfg["rareEggHatches"]        ","
-    ; Profiles
     json .= '"profiles":'             profileJSON                  ","
-    json .= '"currentProfile":"'      EscJ(currentProfile)         '"'
+    json .= '"currentProfile":"'      EscJ(currentProfile)         '",'
+    ; Developer settings
+    json .= '"debugMode":'            b("debugMode")               ","
+    json .= '"ocrLogEnabled":'        b("ocrLogEnabled")           ","
+    json .= '"debugLogEnabled":'      b("debugLogEnabled")         ","
+    json .= '"devModeForce":'         (DEV_MODE_FORCE ? "true" : "false")
     json .= "}"
 
     JS("window.PS99.loadState(" json ")")
@@ -365,7 +419,7 @@ SetCurrentActivity() {
     JS('window.PS99.setActivity("' EscJ(loopStr) '","' EscJ(String(currentZone)) '","' EscJ(currentArea) '","' EscJ(currentQuest) '","' EscJ(currentAction) '")')
 }
 
-; ── Roblox install type detection (ported from HiveHub) ───────
+; ── Roblox install type detection ─────────────────────────────
 DetectRobloxInstallType() {
     local A_LocalAppData := EnvGet("LOCALAPPDATA")
     cmd := ""
@@ -400,7 +454,6 @@ DetectRobloxInstallType() {
     return ""
 }
 
-; ── Roblox detection ──────────────────────────────────────────
 JS_RefreshDetected() {
     installType := DetectRobloxInstallType()
     isRunning   := (GetRobloxHWND() != 0)
@@ -412,7 +465,6 @@ JS_RefreshDetected() {
     JS('window.PS99.setDetected("' EscJ(label) '", true)')
 }
 
-; Poll detection every 2 seconds
 DetectionTick() {
     global wv2ready
     if wv2ready
@@ -429,6 +481,9 @@ JS_Save(data) {
 
 ParseJSONIntoCfg(json) {
     global cfg
+    ; If AHK passed a parsed Map (from JSON.parse in OnWebMessage), stringify it back
+    if json is Map
+        json := JSON.stringify(json)
     for key in ["numberOfLoops","eggsAtOnce","reconnectSeconds","potionsPerUpgrade",
                 "enchantsPerUpgrade","stdPetsForGolden","goldenPetsForRainbow","rareEggHatches",
                 "timePinata","timeLuckyBlock","timeCoinJar","timeComet","timeMiniChests",
@@ -442,7 +497,8 @@ ParseJSONIntoCfg(json) {
     }
     for key in ["eatFruit","do1Star","do2Star","do3Star","do4Star",
                 "hasVip","hasAutoFarm","hasDoubleStars","hasShinyHoverboard",
-                "reconnectAfterLoops","useFlagBestZone","useSprinklerBestZone"] {
+                "reconnectAfterLoops","useFlagBestZone","useSprinklerBestZone",
+                "debugMode","ocrLogEnabled","debugLogEnabled"] {
         if RegExMatch(json, '"' key '"\s*:\s*(true|false)', &m)
             cfg[key] := (m[1] = "true")
     }
@@ -457,11 +513,103 @@ ParseJSONIntoCfg(json) {
 }
 
 ; ================================================================
-;  ROBLOX WINDOW HELPERS
+;  GDIP BUTTON DETECTION
 ; ================================================================
 
-; Resize Roblox to 800×600 — required so all hardcoded coords work.
-; Same approach as RankQuests resizeRobloxWindow().
+; Search for a needle image inside the Roblox window using Gdip_ImageSearch.
+; Returns true + sets foundX/foundY to the button centre if found.
+FindButtonByImage(hWnd, needleFile, &foundX, &foundY, variation := 15) {
+    foundX := 0, foundY := 0
+    if !FileExist(needleFile)
+        return false
+    WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " hWnd)
+    pBitmapH := Gdip_BitmapFromScreen(cx "|" cy "|" cw "|" ch)
+    pBitmapN := Gdip_CreateBitmapFromFile(needleFile)
+    if !pBitmapH || !pBitmapN {
+        try Gdip_DisposeImage(pBitmapH)
+        try Gdip_DisposeImage(pBitmapN)
+        return false
+    }
+    nW := Gdip_GetImageWidth(pBitmapN)
+    nH := Gdip_GetImageHeight(pBitmapN)
+    found := Gdip_ImageSearch(pBitmapH, pBitmapN, &outList, 0, 0, 0, 0, variation, , 1)
+    Gdip_DisposeImage(pBitmapH)
+    Gdip_DisposeImage(pBitmapN)
+    if found > 0 && outList != "" {
+        parts := StrSplit(outList, ",")
+        foundX := cx + Integer(parts[1]) + nW // 2
+        foundY := cy + Integer(parts[2]) + nH // 2
+        return true
+    }
+    return false
+}
+
+; Find and click the Rank Rewards button.
+; Priority: 1) GDIP image search  2) pixel colour scan  3) hardcoded coords
+FindAndClickRewardsButton(hWnd) {
+    WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " hWnd)
+    sx := cw / 800, sy := ch / 600
+
+    ; 1. GDIP image search against saved template (returns screen coords)
+    assetDir := A_ScriptDir "\..\assets"
+    if FindButtonByImage(hWnd, assetDir "\btn_rewards.png", &bx, &by) {
+        WriteDebugLog("Rewards btn: image match at " bx "," by)
+        CoordMode "Mouse", "Screen"
+        Click bx, by
+        CoordMode "Mouse", "Client"
+        return
+    }
+
+    ; 2. Pixel colour scan — search in screen coords, click in screen coords
+    x1 := cx + Round(450 * sx), y1 := cy + Round(300 * sy)
+    x2 := cx + cw - 5,          y2 := cy + Round(520 * sy)
+    CoordMode "Pixel", "Screen"
+    for col in [0x4BBF26, 0x56CC2A, 0x22C55E, 0x3CB849, 0x62C935, 0x4CAF50] {
+        if PixelSearch(&fx, &fy, x1, y1, x2, y2, col, 25) {
+            WriteDebugLog("Rewards btn: pixel match at " fx "," fy)
+            CoordMode "Pixel", "Client"
+            CoordMode "Mouse", "Screen"
+            Click fx, fy
+            CoordMode "Mouse", "Client"
+            return
+        }
+    }
+    CoordMode "Pixel", "Client"
+
+    ; 3. Fallback — client-relative coords only (no cx/cy offset, Mouse is Client)
+    WriteDebugLog("Rewards btn: using fallback client coords")
+    Click Round(706 * sx), Round(425 * sy)
+}
+
+; Dev helper — captures a region of the Roblox window and saves it as a PNG template.
+CaptureButtonTemplate(name, refX, refY, refW, refH) {
+    hWnd := GetRobloxHWND()
+    if !hWnd {
+        AddLog("CaptureButtonTemplate: Roblox not found")
+        return
+    }
+    WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " hWnd)
+    sx := cw / 800, sy := ch / 600
+    capX := cx + Round(refX * sx), capY := cy + Round(refY * sy)
+    capW := Round(refW * sx),      capH := Round(refH * sy)
+    pBitmap := Gdip_BitmapFromScreen(capX "|" capY "|" capW "|" capH)
+    assetDir := A_ScriptDir "\..\assets"
+    if !DirExist(assetDir)
+        DirCreate assetDir
+    Gdip_SaveBitmapToFile(pBitmap, assetDir "\" name ".png")
+    Gdip_DisposeImage(pBitmap)
+    AddLog("Saved template: assets\" name ".png")
+}
+
+CaptureRewardsButton() {
+    ; Captures the area where the Rewards button usually sits (ref 610,380 170x70)
+    CaptureButtonTemplate("btn_rewards", 610, 380, 170, 70)
+    JS('window.PS99.addLog("[DEV] Rewards button template saved → assets\\btn_rewards.png")')
+}
+
+; ================================================================
+;  ROBLOX HELPERS
+; ================================================================
 ResizeRoblox() {
     try {
         hWnd := WinGetID("ahk_exe RobloxPlayerBeta.exe")
@@ -508,7 +656,6 @@ PixelFind(x1, y1, x2, y2, color, tol := 5, &fx := 0, &fy := 0) {
     return PixelSearch(&fx, &fy, x1, y1, x2, y2, color, tol)
 }
 
-; ── Disconnect check — white chat pixel top-left ──────────────
 IsDisconnected() {
     ActivateRoblox()
     return !PixelIs(81, 24, 0xFFFFFF, 2)
@@ -567,17 +714,8 @@ GoToBestZone() {
 }
 
 ; ================================================================
-;  QUEST READING  —  delegates to QuestReader.ahk
-;  To swap OCR library: edit QuestReader.ahk only.
+;  QUEST READING
 ; ================================================================
-ReadQuestSlotOCR(slotIndex) {
-    ; Called per-slot from RefreshQuests.
-    ; Real reads happen in bulk via ReadAllQuestSlots(); this
-    ; wrapper is kept so callers don't need to change signature.
-    return ""   ; not used directly — see RefreshQuests below
-}
-
-; Uses QUEST_DATA regexes from support\Quests.ahk — no duplication
 MatchQuestId(ocrText) {
     for questId, questItem in QUEST_DATA {
         if questItem["Regex"] != "" && RegExMatch(ocrText, questItem["Regex"])
@@ -587,36 +725,36 @@ MatchQuestId(ocrText) {
 }
 
 RefreshQuests(*) {
-    global questSlots, cfg, wv2ready
+    global questSlots, cfg, wv2ready, G_hwnd
     if !wv2ready
         return
 
     AddLog("Refreshing quests...")
 
+    ; Minimize macro window so it doesn't cover the Roblox quest panel during OCR
+    WinMinimize "ahk_id " G_hwnd
+    Sleep 250
+
     ActivateRoblox()
     CloseAll()
 
-    ; ── Click the green "Rewards" button (proportional to any resolution) ──
-    ; Base coords 706,425 are for 800×600; scale to actual client size.
     hWnd := GetRobloxHWND()
     if hWnd = 0 {
+        WinRestore "ahk_id " G_hwnd
         AddLog("Roblox not found")
         return
     }
-    WinGetClientPos(,, &cw, &ch, "ahk_id " hWnd)
-    btnX := Round(706 * cw / 800)
-    btnY := Round(425 * ch / 600)
-    MouseMove btnX, btnY
-    Sleep 50
-    MouseMove 1, 1,, "R"
-    Sleep 50
-    MouseMove -1, -1,, "R"
-    Sleep 50
-    Click btnX, btnY
+
+    FindAndClickRewardsButton(hWnd)
     Sleep 750
 
-    ; ── OCR all 4 quest slots in one pass ────────────────────────
     rawTexts := ReadAllQuestSlots(hWnd)
+
+    CloseAll()
+
+    ; Restore macro window now that scan is complete
+    WinRestore "ahk_id " G_hwnd
+    Sleep 150
 
     starToggles := [cfg["do1Star"], cfg["do2Star"], cfg["do3Star"], cfg["do4Star"]]
     multiplier  := cfg["hasDoubleStars"] ? 2 : 1
@@ -637,9 +775,12 @@ RefreshQuests(*) {
             slot["icon"]      := icon
             slot["status"]    := data["Status"]
             slot["zone"]      := data["Zone"]
+            ; Quests 40/41 go to best egg zone, not Void world — correct display
+            if (id = "40" || id = "41")
+                slot["zone"] := "Best"
             slot["priority"]  := QUEST_PRIORITY.Has(id) ? QUEST_PRIORITY[id] : 0
             slot["amount"]    := ExtractAmount(ocrText)
-            AddLog("Slot " A_Index ": [" id "] " data["Name"] " ×" slot["amount"] " — " ocrText)
+            AddLog("Slot " A_Index ": [" id "] " data["Name"] " ×" slot["amount"])
         } else {
             slot["questId"]   := "?"
             slot["questName"] := "Unknown"
@@ -652,7 +793,6 @@ RefreshQuests(*) {
         questSlots[A_Index] := slot
     }
 
-    ; ── Close panel and push to UI ────────────────────────────────
     CloseAll()
     PushQuestSlots()
     AddLog("Quest refresh complete")
@@ -660,13 +800,11 @@ RefreshQuests(*) {
 
 SetQuestEnabled(data) {
     global questSlots, cfg
-    ; data format: "slotIndex:true" or "slotIndex:false"
     if RegExMatch(data, "(\d):(\w+)", &m) {
         idx := Integer(m[1])
         enabled := (m[2] = "true")
         if idx >= 1 && idx <= 4
             questSlots[idx]["enabled"] := enabled
-        ; sync back to cfg
         cfg["do" idx "Star"] := enabled
         SaveProfile()
     }
@@ -681,7 +819,6 @@ UseKey(keybind) {
     ActivateRoblox()
     Send keybind
     HyperSleep(400)
-    ; Check for "Oops" popup (yellow pixel near centre)
     if PixelFind(434, 287, 438, 291, 0xFFB436, 5) {
         Send "{Escape}"
         HyperSleep(300)
@@ -698,7 +835,6 @@ OpenInventory() {
 
 CloseAll() {
     ActivateRoblox()
-    ; Pixel-search for red X close button (0xFF155F), scaled to actual resolution
     hWnd := GetRobloxHWND()
     if hWnd {
         WinGetClientPos(,, &cw, &ch, "ahk_id " hWnd)
@@ -739,7 +875,6 @@ QuestCollectPotions(amount) {
     currentAction := "Collecting Potions"
     SetCurrentActivity()
     AddLog("Upgrading " amount " times with " cfg["potionToUpgrade"])
-    ; Open Supercomputer (interact)
     Send "e"
     HyperSleep(1000)
     Loop amount {
@@ -755,7 +890,6 @@ QuestCollectEnchants(amount) {
     GoToBestZone()
     currentAction := "Collecting Enchants"
     SetCurrentActivity()
-    AddLog("Upgrading " amount " enchants")
     Send "e"
     HyperSleep(1000)
     Loop amount {
@@ -774,12 +908,10 @@ QuestHatchBestEgg(amount) {
     currentAction := "Hatching Best Egg"
     SetCurrentActivity()
 
-    ; Walk into egg area
     ActivateRoblox()
     Send "{d down}"
     HyperSleep(Delay(1))
     Send "{d up}"
-
     Send "f"
     HyperSleep(800)
 
@@ -791,7 +923,6 @@ QuestHatchBestEgg(amount) {
             break
         currentAction := "Hatching Best Egg (" A_Index "/" hatchesNeeded ")"
         SetCurrentActivity()
-        ; Click Hatch button (approximate coords)
         Click 191, 451
         HyperSleep(Delay(3))
         LoopMs(2000)
@@ -817,13 +948,10 @@ QuestUseFlags(amount) {
         currentArea   := "Flag Zone " zoneId
         currentAction := "Using Flags (" flagsUsed "/" amount ")"
         SetCurrentActivity()
-
-        ; Shoot balloons first
         Loop 8 {
             Click 300 + A_Index*30, 330
             HyperSleep(80)
         }
-
         Loop {
             if !running || flagsUsed >= amount
                 break
@@ -865,7 +993,6 @@ QuestEatFruit(amount) {
         currentAction := "Eating Fruit — " fruit
         SetCurrentActivity()
         OpenInventory()
-        ; Search item (approximate — tune coords to your resolution)
         Click 418, 154
         HyperSleep(200)
         Send "^a"
@@ -909,7 +1036,6 @@ QuestBreakComets(amount) {
         Loop {
             if A_Now > deadline || !running
                 break
-            ; Click comet if visible (blue pixel scan)
             if PixelFind(140, 280, 660, 400, 0x00A6FB, 5, &fx, &fy)
                 Click fx, fy
             HyperSleep(50)
@@ -935,13 +1061,11 @@ QuestMakeGoldenPets(amount) {
     GoToBestZone()
     currentAction := "Making Golden Pets (×" amount ")"
     SetCurrentActivity()
-    AddLog("Making " amount " golden " cfg["petToGolden"])
     Send "e"
     HyperSleep(1000)
     Loop amount {
         if !running
             break
-        ; Click Golden upgrade button (approx)
         Click 400, 300
         HyperSleep(500)
     }
@@ -952,7 +1076,6 @@ QuestMakeRainbowPets(amount) {
     GoToBestZone()
     currentAction := "Making Rainbow Pets (×" amount ")"
     SetCurrentActivity()
-    AddLog("Making " amount " rainbow " cfg["petToRainbow"])
     Send "e"
     HyperSleep(1000)
     Loop amount {
@@ -970,7 +1093,6 @@ QuestHatchRarePet() {
     currentArea   := "Rare Egg Zone"
     currentAction := "Hatching Rare Eggs"
     SetCurrentActivity()
-
     Send "f"
     HyperSleep(800)
     Loop cfg["rareEggHatches"] {
@@ -1018,7 +1140,6 @@ QuestBreakLuckyBlocks(amount) {
         Loop {
             if A_Now > deadline || !running
                 break
-            ; Pink, blue, or yellow lucky block pixels
             if PixelFind(140, 0, 660, 400, 0xEFB4FB, 5, &fx, &fy)
                 Click fx, fy
             else if PixelFind(140, 280, 660, 400, 0x00ACFF, 5, &fx, &fy)
@@ -1053,7 +1174,6 @@ EatFruitBonus() {
     }
 }
 
-; ── Quest dispatcher ──────────────────────────────────────────
 DoQuest(questId, questName, amount := 1) {
     global currentQuest
     currentQuest  := questName
@@ -1149,6 +1269,8 @@ StartMacro(*) {
     AddLog("Macro started")
 
     SetTimer UpdateStats, 500
+    ; Refresh quests NOW on Start
+    RefreshQuests()
     SetTimer MacroLoop, -1
 }
 
@@ -1183,12 +1305,10 @@ StopMacro(*) {
     AddLog("Macro stopped")
 }
 
-; ── Main quest loop (runs on its own thread) ──────────────────
 MacroLoop() {
     global running, paused, currentLoop, cfg, questSlots
 
     AddLog("Entering quest loop")
-    RefreshQuests()
 
     Loop cfg["numberOfLoops"] {
         if !running
@@ -1201,7 +1321,6 @@ MacroLoop() {
         currentLoop := A_Index
         SetCurrentActivity()
 
-        ; Find the highest-priority enabled quest with a known ID
         bestSlot := ""
         priorityOrder := ["20","44","43","38","21","37","66","39","40","41","42","33",
                           "34-1","34-2","34-3","35","14","15","7","9","?"]
@@ -1225,7 +1344,6 @@ MacroLoop() {
 
         CheckConnection()
 
-        ; Ultimate ability
         if currentZone = BEST_ZONE {
             ActivateRoblox()
             Send "q"
@@ -1236,7 +1354,6 @@ MacroLoop() {
     if !running
         return
 
-    ; Post-loop tasks
     EatFruitBonus()
 
     if cfg["reconnectAfterLoops"] {
@@ -1265,7 +1382,7 @@ CleanupOnExit(*) {
 }
 
 ; ================================================================
-;  PROFILE SYSTEM  (identical pattern to HiveHub)
+;  PROFILE SYSTEM
 ; ================================================================
 LoadProfilesJSON() {
     global JSON_PATH

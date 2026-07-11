@@ -1,43 +1,50 @@
 ; ================================================================
 ;  QuestReader.ahk  —  engine\support\
-;
 ;  Uses RapidOCR (PaddleOCR-based) for reliable game-font reading.
-;  Supports any resolution — no window resize needed.
-;  All coordinates scale proportionally from 800×600 reference.
+;  Supports any resolution — coordinates scale from 800x600 base.
 ; ================================================================
 
 #Include ..\..\lib\Pin.ahk
 #Include ..\..\lib\TextRender.ahk
 
-; ── 800×600 reference coordinates (from RankQuests Coords.ahk) ──
 global BASE_W := 800, BASE_H := 600
 
-global QUEST_OCR_BASE_X := 128    ; left edge of quest text panel
-global QUEST_OCR_BASE_Y := 270    ; 7px above Quest1 (y=277)
-global QUEST_OCR_BASE_W := 200    ; captures full quest name
-global QUEST_OCR_BASE_H := 160    ; covers all 4 slots + margin
+global QUEST_OCR_BASE_X := 128
+global QUEST_OCR_BASE_Y := 270
+global QUEST_OCR_BASE_W := 200
+global QUEST_OCR_BASE_H := 160
 
-; Quest slot y-bands at 800×600 (relative to client top-left)
-; Each slot spans 34px; these ranges include a little padding
-global QUEST_BANDS_800 := [[277, 312], [313, 346], [347, 380], [381, 425]]
+; Recalibrated from actual OCR log data at 1920x1058 resolution.
+; Slot 1 first-line ref-y≈286, Slot 2≈314, Slot 3≈341, Slot 4≈372.
+; Old bands had Slot 3 starting at 347 so Slot 3 content (ref-y≈341) bled into Slot 2.
+global QUEST_BANDS_800 := [[275, 308], [309, 336], [337, 367], [368, 425]]
 
-global OCR_DEBUG := true   ; true → yellow outline + raw text overlay
+; ── CRITICAL: persist TextRender so GC doesn't destroy the window ──
+; TextRender creates a layered window. AHK ref-count calls
+; __Delete -> DestroyWindow the moment the local var goes out of scope
+; UNLESS a global holds the reference. g_ocrDebugRender is that ref.
+global g_ocrDebugRender := 0
 
-; ----------------------------------------------------------------
-;  GetRobloxGeometry(hWnd)
-;  Returns {cx, cy, cw, ch, sx, sy} for the Roblox window.
-;  sx/sy are scale factors from 800×600 reference to actual size.
-; ----------------------------------------------------------------
+IsDebugMode() {
+    global cfg
+    try return cfg.Has("debugMode") ? !!cfg["debugMode"] : false
+    return false
+}
+
+IsOcrLogEnabled() {
+    global cfg
+    try return cfg.Has("ocrLogEnabled") ? !!cfg["ocrLogEnabled"] : false
+    return false
+}
+
 GetRobloxGeometry(hWnd) {
     WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " hWnd)
     return {cx: cx, cy: cy, cw: cw, ch: ch,
             sx: cw / BASE_W, sy: ch / BASE_H}
 }
 
-; ----------------------------------------------------------------
-;  ReadAllQuestSlots(hWnd)  → Array[4] of raw strings
-; ----------------------------------------------------------------
 ReadAllQuestSlots(hWnd) {
+    global g_ocrDebugRender
     result := ["", "", "", ""]
 
     try {
@@ -46,41 +53,49 @@ ReadAllQuestSlots(hWnd) {
         return result
     }
 
-    ; ── OCR rect in absolute screen coords ──────────────────────
     ocrX := g.cx + Round(QUEST_OCR_BASE_X * g.sx)
     ocrY := g.cy + Round(QUEST_OCR_BASE_Y * g.sy)
     ocrW := Round(QUEST_OCR_BASE_W * g.sx)
     ocrH := Round(QUEST_OCR_BASE_H * g.sy)
 
-    if OCR_DEBUG
+    if IsDebugMode()
         try Pin(ocrX, ocrY, ocrX + ocrW, ocrY + ocrH, 3000, "b2 cYellow flash0")
 
     try {
         ocrObj := RapidOcr.FromRect(ocrX, ocrY, ocrW, ocrH)
-    } catch {
+    } catch as err {
+        WriteOcrLog("ERROR: RapidOcr.FromRect failed — " err.Message)
         return result
     }
 
-    if !ocrObj || !ocrObj.Lines.Length
+    if !ocrObj || !ocrObj.Lines.Length {
+        WriteOcrLog("No lines returned from OCR")
         return result
+    }
 
-    if OCR_DEBUG
-        try TextRender(ocrObj.text, "x" (ocrX + ocrW + 5) " y" ocrY " w400 t4000 s11")
+    WriteOcrLog("=== OCR CAPTURE ===")
+    WriteOcrLog("Rect: " ocrX "," ocrY " " ocrW "x" ocrH)
+    WriteOcrLog("Raw text: " ocrObj.text)
 
-    ; ── Slot y-bands scaled to actual screen coords ──────────────
-    ; RapidOcr.FromRect returns line.y in absolute screen coords
-    ; (it adds orgY internally), so compare against cy + scaled_y.
+    if IsDebugMode()
+        try g_ocrDebugRender := TextRender(
+            ocrObj.text,
+            "x" (ocrX + ocrW + 5) " y" ocrY " w400 t4000 s11"
+        )
+
     bands := []
     for _, b in QUEST_BANDS_800
         bands.Push([g.cy + Round(b[1] * g.sy),
                     g.cy + Round(b[2] * g.sy)])
 
-    ; ── Assign each OCR line to a slot by y-position ────────────
-    ; This is immune to: case, star icons, cross-slot merging.
     slotText := ["", "", "", ""]
     for _, line in ocrObj.Lines {
         txt := Trim(line.text)
-        if !RegExMatch(txt, "[a-zA-Z]{2,}")   ; skip pure symbols/numbers
+        WriteOcrLog("  Line y=" line.y " text=" txt)
+        if !RegExMatch(txt, "[a-zA-Z]{2,}")
+            continue
+        ; Skip panel header/footer text that isn't a quest
+        if RegExMatch(txt, "i)^(earn.{0,2}star|you\s+have|you\s+are|rank\s*\d+)")
             continue
         ly := line.y
         Loop 4 {
@@ -92,16 +107,16 @@ ReadAllQuestSlots(hWnd) {
         }
     }
 
-    ; ── Clean and normalise each slot ───────────────────────────
-    Loop 4
+    WriteOcrLog("--- Slot results ---")
+    Loop 4 {
         result[A_Index] := NormalizeOCRText(Trim(slotText[A_Index]))
+        WriteOcrLog("Slot " A_Index ": [" result[A_Index] "]")
+    }
+    WriteOcrLog("===================")
 
     return result
 }
 
-; ----------------------------------------------------------------
-;  NormalizeOCRText — fix known PS99 FredokaOne font misreads
-; ----------------------------------------------------------------
 NormalizeOCRText(text) {
     text := RegExReplace(text, "i)breake?b[a-z]*", "breakables")
     text := RegExReplace(text, "i)&mond|diam[o0]nd",  "diamond")
@@ -112,9 +127,6 @@ NormalizeOCRText(text) {
     return text
 }
 
-; ----------------------------------------------------------------
-;  ExtractAmount
-; ----------------------------------------------------------------
 ExtractAmount(ocrText) {
     ocrText := RegExReplace(ocrText, "27 SO", "2750")
     ocrText := RegExReplace(ocrText, "\bS\b",  "5")
@@ -123,12 +135,9 @@ ExtractAmount(ocrText) {
 
     if RegExMatch(ocrText, "\(x(\d+)\)", &m)
         return Integer(m[1])
-
     if RegExMatch(ocrText, "(\b\d+(?:\.\d+)?)[kK]\b", &m)
         return Round(Float(m[1]) * 1000)
-
     if RegExMatch(ocrText, "\b(\d[\d,]*)\b", &m)
         return Integer(StrReplace(m[1], ",", ""))
-
     return 1
 }
